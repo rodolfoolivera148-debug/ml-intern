@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -17,17 +17,40 @@ import { isInIframe, triggerLogin } from '@/hooks/useAuth';
 const HF_ORANGE = '#FF9D00';
 
 const ORG_JOIN_URL = 'https://huggingface.co/organizations/ml-agent-explorers/share/GzPMJUivoFPlfkvFtIqEouZKSytatKQSZT';
+const ORG_JOINED_KEY = 'hf-agent-org-joined';
+
+function hasJoinedOrg(): boolean {
+  try { return localStorage.getItem(ORG_JOINED_KEY) === '1'; } catch { return false; }
+}
+
+function markOrgJoined(): void {
+  try { localStorage.setItem(ORG_JOINED_KEY, '1'); } catch { /* ignore */ }
+}
 
 export default function WelcomeScreen() {
   const { createSession } = useSessionStore();
   const { setPlan, clearPanel, user } = useAgentStore();
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [iframeJoined, setIframeJoined] = useState(false);
+  const [orgJoined, setOrgJoined] = useState(hasJoinedOrg);
+  const joinLinkOpened = useRef(false);
 
   const inIframe = isInIframe();
   const isAuthenticated = user?.authenticated;
   const isDevUser = user?.username === 'dev';
+
+  // Auto-advance when user returns from the join link
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible' || !joinLinkOpened.current) return;
+      joinLinkOpened.current = false;
+      markOrgJoined();
+      setOrgJoined(true);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
 
   const tryCreateSession = useCallback(async () => {
     setIsCreating(true);
@@ -96,6 +119,34 @@ export default function WelcomeScreen() {
     },
   };
 
+  // Description block (reused across screens)
+  const description = (
+    <Typography
+      variant="body1"
+      sx={{
+        color: 'var(--muted-text)',
+        maxWidth: 520,
+        mb: 5,
+        lineHeight: 1.8,
+        fontSize: '0.95rem',
+        textAlign: 'center',
+        px: 2,
+        '& strong': { color: 'var(--text)', fontWeight: 600 },
+      }}
+    >
+      A general-purpose AI agent for <strong>machine learning engineering</strong>.
+      It browses <strong>Hugging Face documentation</strong>, manages{' '}
+      <strong>repositories</strong>, launches <strong>training jobs</strong>,
+      and explores <strong>datasets</strong> — all through natural conversation.
+    </Typography>
+  );
+
+  // Which screen to show
+  const needsJoin = inIframe && !orgJoined;
+  const showOpenAgent = inIframe && orgJoined;
+  const showSignin = !inIframe && !isAuthenticated && !isDevUser;
+  const showReady = !inIframe && (isAuthenticated || isDevUser);
+
   return (
     <Box
       sx={{
@@ -131,8 +182,8 @@ export default function WelcomeScreen() {
         HF Agent
       </Typography>
 
-      {/* ── Iframe: join org → then redirect to Space ────────────── */}
-      {inIframe && !iframeJoined && (
+      {/* ── Iframe: join org (first visit only) ──────────────────── */}
+      {needsJoin && (
         <>
           <Typography
             variant="body1"
@@ -157,51 +208,19 @@ export default function WelcomeScreen() {
             href={ORG_JOIN_URL}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => { joinLinkOpened.current = true; }}
             startIcon={<GroupAddIcon />}
             sx={primaryBtnSx}
           >
             Join ML Agent Explorers
           </Button>
-
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setIframeJoined(true)}
-            sx={{
-              mt: 2,
-              color: 'var(--muted-text)',
-              textTransform: 'none',
-              fontSize: '0.85rem',
-              '&:hover': { color: 'var(--text)' },
-            }}
-          >
-            I've already joined →
-          </Button>
         </>
       )}
 
-      {/* ── Iframe: after joining → open Space ───────────────────── */}
-      {inIframe && iframeJoined && (
+      {/* ── Iframe: already joined → open Space ──────────────────── */}
+      {showOpenAgent && (
         <>
-          <Typography
-            variant="body1"
-            sx={{
-              color: 'var(--muted-text)',
-              maxWidth: 520,
-              mb: 5,
-              lineHeight: 1.8,
-              fontSize: '0.95rem',
-              textAlign: 'center',
-              px: 2,
-              '& strong': { color: 'var(--text)', fontWeight: 600 },
-            }}
-          >
-            A general-purpose AI agent for <strong>machine learning engineering</strong>.
-            It browses <strong>Hugging Face documentation</strong>, manages{' '}
-            <strong>repositories</strong>, launches <strong>training jobs</strong>,
-            and explores <strong>datasets</strong> — all through natural conversation.
-          </Typography>
-
+          {description}
           <Button
             variant="contained"
             size="large"
@@ -218,27 +237,9 @@ export default function WelcomeScreen() {
       )}
 
       {/* ── Direct: not logged in → sign in ──────────────────────── */}
-      {!inIframe && !isAuthenticated && !isDevUser && (
+      {showSignin && (
         <>
-          <Typography
-            variant="body1"
-            sx={{
-              color: 'var(--muted-text)',
-              maxWidth: 520,
-              mb: 5,
-              lineHeight: 1.8,
-              fontSize: '0.95rem',
-              textAlign: 'center',
-              px: 2,
-              '& strong': { color: 'var(--text)', fontWeight: 600 },
-            }}
-          >
-            A general-purpose AI agent for <strong>machine learning engineering</strong>.
-            It browses <strong>Hugging Face documentation</strong>, manages{' '}
-            <strong>repositories</strong>, launches <strong>training jobs</strong>,
-            and explores <strong>datasets</strong> — all through natural conversation.
-          </Typography>
-
+          {description}
           <Button
             variant="contained"
             size="large"
@@ -265,27 +266,9 @@ export default function WelcomeScreen() {
       )}
 
       {/* ── Direct: authenticated → start session ────────────────── */}
-      {!inIframe && (isAuthenticated || isDevUser) && (
+      {showReady && (
         <>
-          <Typography
-            variant="body1"
-            sx={{
-              color: 'var(--muted-text)',
-              maxWidth: 520,
-              mb: 5,
-              lineHeight: 1.8,
-              fontSize: '0.95rem',
-              textAlign: 'center',
-              px: 2,
-              '& strong': { color: 'var(--text)', fontWeight: 600 },
-            }}
-          >
-            A general-purpose AI agent for <strong>machine learning engineering</strong>.
-            It browses <strong>Hugging Face documentation</strong>, manages{' '}
-            <strong>repositories</strong>, launches <strong>training jobs</strong>,
-            and explores <strong>datasets</strong> — all through natural conversation.
-          </Typography>
-
+          {description}
           <Button
             variant="contained"
             size="large"
