@@ -320,6 +320,8 @@ class SessionManager:
         if not agent_session:
             return False
 
+        ws_manager.clear_buffer(session_id)
+
         # Clean up sandbox Space before cancelling the task
         await self._cleanup_sandbox(agent_session.session)
 
