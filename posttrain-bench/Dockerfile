@@ -4,11 +4,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN chmod 1777 /tmp && \
     apt-get update && apt-get install -y \
-        python3.10 python3-dev python3-pip git wget curl build-essential uuid-runtime \
+        software-properties-common git wget curl build-essential uuid-runtime \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+        python3.11 python3.11-dev python3.11-venv \
     && rm -rf /var/lib/apt/lists/*
 
-RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
-    ln -sf /usr/bin/python3.10 /usr/bin/python
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
+    ln -sf /usr/bin/python3.11 /usr/bin/python
 
 # Node.js 22.x
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
