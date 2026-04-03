@@ -284,12 +284,16 @@ async def event_listener(
                 arguments = event.data.get("arguments", {}) if event.data else {}
                 if tool_name:
                     last_tool_name[0] = tool_name
-                    args_str = json.dumps(arguments)[:80]
-                    print_tool_call(tool_name, args_str)
+                    # Skip printing research tool_call — the tool_log handler shows it
+                    if tool_name != "research":
+                        args_str = json.dumps(arguments)[:80]
+                        print_tool_call(tool_name, args_str)
             elif event.event_type == "tool_output":
                 output = event.data.get("output", "") if event.data else ""
                 success = event.data.get("success", False) if event.data else False
-                if output:
+                # Skip research output — sub-agent progress shown via tool_log,
+                # and the main agent will summarize the findings in its response
+                if last_tool_name[0] != "research" and output:
                     should_truncate = last_tool_name[0] != "plan_tool"
                     print_tool_output(output, success, truncate=should_truncate)
                 shimmer.start()
@@ -931,6 +935,7 @@ async def headless_main(prompt: str, model: str | None = None) -> None:
     console = _create_rich_console()
     shimmer = _ThinkingShimmer(console)
     stream_buf = _StreamBuffer(console)
+    _hl_last_tool = [None]
     shimmer.start()
 
     while True:
@@ -954,12 +959,14 @@ async def headless_main(prompt: str, model: str | None = None) -> None:
             tool_name = event.data.get("tool", "") if event.data else ""
             arguments = event.data.get("arguments", {}) if event.data else {}
             if tool_name:
-                args_str = json.dumps(arguments)[:80]
-                print_tool_call(tool_name, args_str)
+                _hl_last_tool[0] = tool_name
+                if tool_name != "research":
+                    args_str = json.dumps(arguments)[:80]
+                    print_tool_call(tool_name, args_str)
         elif event.event_type == "tool_output":
             output = event.data.get("output", "") if event.data else ""
             success = event.data.get("success", False) if event.data else False
-            if output:
+            if _hl_last_tool[0] != "research" and output:
                 print_tool_output(output, success, truncate=True)
             shimmer.start()
         elif event.event_type == "tool_log":
