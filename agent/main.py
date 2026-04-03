@@ -212,50 +212,35 @@ class _ThinkingShimmer:
 
 
 class _StreamBuffer:
-    """Buffers streaming chunks and renders markdown line-by-line via rich Live."""
+    """Buffers streaming tokens, flushes complete lines. No flicker."""
 
     def __init__(self, console):
         self._console = console
         self._buffer = ""
-        self._live = None
-        self._lines_printed = 0
-
-    def _start_live(self):
-        if self._live is None:
-            from rich.live import Live
-            self._live = Live(
-                "",
-                console=self._console,
-                refresh_per_second=8,
-                vertical_overflow="visible",
-            )
-            self._live.start()
+        self._started = False
 
     def add_chunk(self, text: str):
         self._buffer += text
-        self._start_live()
-        self._update()
-
-    def _update(self):
-        from rich.markdown import Markdown
-        if self._live:
-            self._live.update(Markdown(self._buffer))
+        # Flush every complete line
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if not self._started:
+                self._console.print()  # blank line before first output
+                self._started = True
+            self._console.print(line)
 
     def finish(self):
-        """Finalize: stop live display (final frame is already rendered)."""
-        if self._live:
-            self._live.stop()
-            self._live = None
+        """Print any remaining partial line, then reset."""
+        if self._buffer.strip():
+            if not self._started:
+                self._console.print()
+            self._console.print(self._buffer)
         self._buffer = ""
-        self._lines_printed = 0
+        self._started = False
 
     def discard(self):
-        """Discard without final render (e.g. for tool-only turns)."""
-        if self._live:
-            self._live.stop()
-            self._live = None
         self._buffer = ""
-        self._lines_printed = 0
+        self._started = False
 
 
 async def event_listener(
