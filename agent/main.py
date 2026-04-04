@@ -862,6 +862,7 @@ async def headless_main(
     prompt: str,
     model: str | None = None,
     max_iterations: int | None = None,
+    stream: bool = True,
 ) -> None:
     """Run a single prompt headlessly and exit."""
     import logging
@@ -905,7 +906,7 @@ async def headless_main(
             session_holder=session_holder,
             hf_token=hf_token,
             local_mode=True,
-            stream=True,
+            stream=stream,
         )
     )
 
@@ -1029,6 +1030,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", "-m", default=None, help=f"Model to use (default: from config)")
     parser.add_argument("--max-iterations", type=int, default=None,
                         help="Max LLM requests per turn (default: 50, use -1 for unlimited)")
+    parser.add_argument("--no-stream", action="store_true",
+                        help="Disable token streaming (use non-streaming LLM calls)")
     args = parser.parse_args()
 
     try:
@@ -1036,7 +1039,7 @@ if __name__ == "__main__":
             max_iter = args.max_iterations
             if max_iter is not None and max_iter < 0:
                 max_iter = 10_000  # effectively unlimited
-            asyncio.run(headless_main(args.prompt, model=args.model, max_iterations=max_iter))
+            asyncio.run(headless_main(args.prompt, model=args.model, max_iterations=max_iter, stream=not args.no_stream))
         else:
             asyncio.run(main())
     except KeyboardInterrupt:

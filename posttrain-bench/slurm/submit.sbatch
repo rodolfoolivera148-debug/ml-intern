@@ -108,7 +108,7 @@ srun \
             MODEL_FLAG="--model anthropic/'"${AGENT_CONFIG}"'"
         fi
 
-        uv run --project /tmp/hf_agent python -m agent.main --max-iterations -1 $MODEL_FLAG "$PROMPT"
+        uv run --project /tmp/hf_agent python -m agent.main --max-iterations -1 --no-stream $MODEL_FLAG "$PROMPT"
     ' > "${SOLVE_OUT}" 2>&1 || true
 
 END_TIME=$(date +%s)

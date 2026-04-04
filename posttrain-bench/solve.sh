@@ -37,4 +37,4 @@ if [ -n "${AGENT_CONFIG:-}" ]; then
 fi
 
 # Run headlessly with unlimited iterations for the 10-hour budget
-python -m agent.main --max-iterations -1 $MODEL_FLAG "$PROMPT"
+python -m agent.main --max-iterations -1 --no-stream $MODEL_FLAG "$PROMPT"
