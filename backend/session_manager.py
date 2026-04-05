@@ -319,6 +319,14 @@ class SessionManager:
         operation = Operation(op_type=OpType.UNDO)
         return await self.submit(session_id, operation)
 
+    async def truncate(self, session_id: str, user_message_index: int) -> bool:
+        """Truncate conversation to before a specific user message (direct, no queue)."""
+        async with self._lock:
+            agent_session = self.sessions.get(session_id)
+        if not agent_session or not agent_session.is_active:
+            return False
+        return agent_session.session.context_manager.truncate_to_user_message(user_message_index)
+
     async def compact(self, session_id: str) -> bool:
         """Compact context in a session."""
         operation = Operation(op_type=OpType.COMPACT)

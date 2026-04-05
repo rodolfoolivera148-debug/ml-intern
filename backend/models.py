@@ -54,6 +54,12 @@ class SubmitRequest(BaseModel):
     text: str
 
 
+class TruncateRequest(BaseModel):
+    """Request to truncate conversation history to before a specific user message."""
+
+    user_message_index: int
+
+
 class SessionResponse(BaseModel):
     """Response when creating a new session."""
 

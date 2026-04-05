@@ -24,7 +24,7 @@ export default function SessionChat({ sessionId, isActive, onSessionDead }: Sess
   const { isConnected, isProcessing, activityStatus, updateSession } = useAgentStore();
   const { updateSessionTitle } = useSessionStore();
 
-  const { messages, sendMessage, stop, status, undoLastTurn, approveTools } = useAgentChat({
+  const { messages, sendMessage, stop, status, undoLastTurn, editAndRegenerate, approveTools } = useAgentChat({
     sessionId,
     isActive,
     onReady: () => logger.log(`Session ${sessionId} ready`),
@@ -102,6 +102,7 @@ export default function SessionChat({ sessionId, isActive, onSessionDead }: Sess
         isProcessing={busy}
         approveTools={approveTools}
         onUndoLastTurn={undoLastTurn}
+        onEditAndRegenerate={editAndRegenerate}
       />
       <ChatInput
         onSend={handleSendMessage}

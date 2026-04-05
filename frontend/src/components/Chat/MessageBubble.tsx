@@ -6,6 +6,7 @@ interface MessageBubbleProps {
   message: UIMessage;
   isLastTurn?: boolean;
   onUndoTurn?: () => void;
+  onEditAndRegenerate?: (messageId: string, newText: string) => void | Promise<void>;
   isProcessing?: boolean;
   isStreaming?: boolean;
   approveTools: (approvals: Array<{ tool_call_id: string; approved: boolean; feedback?: string | null }>) => Promise<boolean>;
@@ -15,6 +16,7 @@ export default function MessageBubble({
   message,
   isLastTurn = false,
   onUndoTurn,
+  onEditAndRegenerate,
   isProcessing = false,
   isStreaming = false,
   approveTools,
@@ -25,6 +27,7 @@ export default function MessageBubble({
         message={message}
         isLastTurn={isLastTurn}
         onUndoTurn={onUndoTurn}
+        onEditAndRegenerate={onEditAndRegenerate}
         isProcessing={isProcessing}
       />
     );

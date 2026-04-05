@@ -243,6 +243,25 @@ class ContextManager:
 
         return False
 
+    def truncate_to_user_message(self, user_message_index: int) -> bool:
+        """Truncate history to just before the Nth user message (0-indexed).
+
+        Removes that user message and everything after it.
+        System message (index 0) is never removed.
+
+        Returns True if the target user message was found and removed.
+        """
+        count = 0
+        for i, msg in enumerate(self.items):
+            if i == 0:
+                continue  # skip system message
+            if getattr(msg, "role", None) == "user":
+                if count == user_message_index:
+                    self.items = self.items[:i]
+                    return True
+                count += 1
+        return False
+
     async def compact(
         self, model_name: str, tool_specs: list[dict] | None = None
     ) -> None:

@@ -640,12 +640,52 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
     apiFetch(`/api/interrupt/${sessionId}`, { method: 'POST' }).catch(() => {});
   }, [sessionId, updateSession]);
 
+  // -- Edit message + regenerate from that point ----------------------------
+  const editAndRegenerate = useCallback(async (messageId: string, newText: string) => {
+    try {
+      const msgs = chatActionsRef.current.messages;
+      const setMsgs = chatActionsRef.current.setMessages;
+      if (!setMsgs) return;
+
+      // Find the target message and compute user message index (0-indexed, skipping system)
+      const msgIndex = msgs.findIndex(m => m.id === messageId);
+      if (msgIndex < 0) return;
+
+      let userMsgIndex = 0;
+      for (let i = 0; i < msgIndex; i++) {
+        if (msgs[i].role === 'user') userMsgIndex++;
+      }
+
+      // 1. Truncate backend history
+      const res = await apiFetch(`/api/truncate/${sessionId}`, {
+        method: 'POST',
+        body: JSON.stringify({ user_message_index: userMsgIndex }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        logger.error('Truncate API returned', res.status);
+        return;
+      }
+
+      // 2. Truncate frontend messages
+      const truncated = msgs.slice(0, msgIndex);
+      setMsgs(truncated);
+      saveMessages(sessionId, truncated);
+
+      // 3. Send the edited message (reuses existing transport + /api/chat)
+      chat.sendMessage({ text: newText, metadata: { createdAt: new Date().toISOString() } });
+    } catch (e) {
+      logger.error('Edit and regenerate failed:', e);
+    }
+  }, [sessionId, chat]);
+
   return {
     messages: chat.messages,
     sendMessage: chat.sendMessage,
     stop,
     status: chat.status,
     undoLastTurn,
+    editAndRegenerate,
     approveTools,
   };
 }
