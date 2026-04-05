@@ -12,6 +12,7 @@ import { useChat } from '@ai-sdk/react';
 import { type UIMessage, lastAssistantMessageIsCompleteWithApprovalResponses } from 'ai';
 import { SSEChatTransport, type SideChannelCallbacks } from '@/lib/sse-chat-transport';
 import { loadMessages, saveMessages } from '@/lib/chat-message-store';
+import { saveResearch, loadResearch, clearResearch, RESEARCH_MAX_STEPS } from '@/lib/research-store';
 import { llmMessagesToUIMessages } from '@/lib/convert-llm-messages';
 import { apiFetch } from '@/utils/api';
 import { useAgentStore } from '@/store/agentStore';
@@ -92,32 +93,39 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
           const stats = { ...sessState.researchStats };
 
           if (log === 'Starting research sub-agent...') {
+            const newStats = { toolCount: 0, tokenCount: 0, startedAt: Date.now(), finalElapsed: null };
             updateSession(sessionId, {
               researchSteps: [],
-              researchStats: { toolCount: 0, tokenCount: 0, startedAt: Date.now(), finalElapsed: null },
+              researchStats: newStats,
               activityStatus: { type: 'tool', toolName: 'research', description: log },
             });
+            saveResearch(sessionId, [], newStats);
           } else if (log.startsWith('tokens:')) {
             stats.tokenCount = parseInt(log.slice(7), 10);
             updateSession(sessionId, { researchStats: stats });
+            saveResearch(sessionId, sessState.researchSteps, stats);
           } else if (log.startsWith('tools:')) {
             stats.toolCount = parseInt(log.slice(6), 10);
             updateSession(sessionId, { researchStats: stats });
+            saveResearch(sessionId, sessState.researchSteps, stats);
           } else if (log === 'Research complete.') {
             const elapsed = stats.startedAt
               ? Math.round((Date.now() - stats.startedAt) / 1000)
               : null;
+            const doneStats = { ...stats, startedAt: null, finalElapsed: elapsed };
             updateSession(sessionId, {
-              researchStats: { ...stats, startedAt: null, finalElapsed: elapsed },
+              researchStats: doneStats,
               activityStatus: { type: 'tool', toolName: 'research', description: log },
             });
+            clearResearch(sessionId);
           } else {
-            // Regular tool call step — append
-            const steps = [...sessState.researchSteps, log];
+            // Regular tool call step — append (trim to max)
+            const steps = [...sessState.researchSteps, log].slice(-RESEARCH_MAX_STEPS);
             updateSession(sessionId, {
               researchSteps: steps,
               activityStatus: { type: 'tool', toolName: 'research', description: log },
             });
+            saveResearch(sessionId, steps, stats);
           }
           return;
         }
@@ -360,7 +368,7 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
         if (msgsRes.ok) {
           const data = await msgsRes.json();
           if (cancelled || !Array.isArray(data) || data.length === 0) return;
-          const uiMsgs = llmMessagesToUIMessages(data, pendingIds);
+          const uiMsgs = llmMessagesToUIMessages(data, pendingIds, chatActionsRef.current.messages);
           if (uiMsgs.length > 0) {
             chat.setMessages(uiMsgs);
             saveMessages(sessionId, uiMsgs);
@@ -372,9 +380,25 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
         // results make tools look "done" even when the agent is still
         // mid-turn and about to call more tools.
         if (backendIsProcessing) {
-          updateSession(sessionId, { isProcessing: true, activityStatus: { type: 'thinking' } });
+          // Restore research sub-agent state alongside isProcessing in one
+          // atomic update so the UI never sees isProcessing=false with stale
+          // tool states (which would coerce them to 'output-available').
+          const savedResearch = loadResearch(sessionId);
+          updateSession(sessionId, {
+            isProcessing: true,
+            activityStatus: savedResearch?.stats.startedAt
+              ? { type: 'tool', toolName: 'research', description: 'Resuming research...' }
+              : { type: 'thinking' },
+            ...(savedResearch && {
+              researchSteps: savedResearch.steps,
+              researchStats: savedResearch.stats,
+            }),
+          });
         } else if (pendingIds && pendingIds.size > 0) {
           updateSession(sessionId, { activityStatus: { type: 'waiting-approval' } });
+          clearResearch(sessionId);
+        } else {
+          clearResearch(sessionId);
         }
       } catch {
         /* backend unreachable -- localStorage fallback is fine */
@@ -481,7 +505,7 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
                 // Final hydration to get the complete message state
                 const result = await hydrateMessages();
                 if (result) {
-                  const uiMsgs = llmMessagesToUIMessages(result.data, result.pendingIds);
+                  const uiMsgs = llmMessagesToUIMessages(result.data, result.pendingIds, chatActionsRef.current.messages);
                   if (uiMsgs.length > 0) {
                     chat.setMessages(uiMsgs);
                     saveMessages(sessionId, uiMsgs);
@@ -495,7 +519,7 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
                 stopReconnect();
                 const result = await hydrateMessages();
                 if (result) {
-                  const uiMsgs = llmMessagesToUIMessages(result.data, result.pendingIds);
+                  const uiMsgs = llmMessagesToUIMessages(result.data, result.pendingIds, chatActionsRef.current.messages);
                   if (uiMsgs.length > 0) {
                     chat.setMessages(uiMsgs);
                     saveMessages(sessionId, uiMsgs);
@@ -519,7 +543,7 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
       if (!result) return;
 
       const { data, pendingIds, info } = result;
-      const uiMsgs = llmMessagesToUIMessages(data, pendingIds);
+      const uiMsgs = llmMessagesToUIMessages(data, pendingIds, chatActionsRef.current.messages);
       if (uiMsgs.length > 0) {
         chat.setMessages(uiMsgs);
         saveMessages(sessionId, uiMsgs);
@@ -542,11 +566,14 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
         pollTimerRef.current = setInterval(async () => {
           const fresh = await hydrateMessages();
           if (!fresh) return;
-          const msgs = llmMessagesToUIMessages(fresh.data, fresh.pendingIds);
-          if (msgs.length > 0) {
+          const msgs = llmMessagesToUIMessages(fresh.data, fresh.pendingIds, chatActionsRef.current.messages);
+
+          const currentCount = chatActionsRef.current.messages.length;
+          if (msgs.length > currentCount || currentCount === 0) {
             chat.setMessages(msgs);
             saveMessages(sessionId, msgs);
-          }
+          } 
+
           // If backend stopped processing, clean up
           if (fresh.info && !fresh.info.is_processing) {
             updateSession(sessionId, { isProcessing: false });
@@ -570,7 +597,7 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
     if (chat.messages.length !== prevLenRef.current) {
       prevLenRef.current = chat.messages.length;
       saveMessages(sessionId, chat.messages);
-    }
+    } 
   }, [sessionId, chat.messages]);
 
   // -- Undo last turn (REST call + client-side message removal) -----------

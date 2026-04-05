@@ -10,6 +10,7 @@ import BlockIcon from '@mui/icons-material/Block';
 import { useAgentStore } from '@/store/agentStore';
 import { useLayoutStore } from '@/store/layoutStore';
 import { logger } from '@/utils/logger';
+import { RESEARCH_MAX_STEPS } from '@/lib/research-store';
 import type { UIMessage } from 'ai';
 
 // ---------------------------------------------------------------------------
@@ -88,8 +89,16 @@ function parseStepArgs(step: string): Record<string, string> {
   } catch {
     // JSON likely truncated — extract key-value pairs via regex
     const result: Record<string, string> = {};
+    // Match complete "key": "value" pairs
     for (const m of jsonStr.matchAll(/"(\w+)":\s*"([^"]*)"/g)) {
       result[m[1]] = m[2];
+    }
+    // Match truncated trailing value: "key": "value... (no closing quote)
+    if (Object.keys(result).length === 0 || !result.query) {
+      const trunc = jsonStr.match(/"(\w+)":\s*"([^"]+)$/);
+      if (trunc && !result[trunc[1]]) {
+        result[trunc[1]] = trunc[2];
+      }
     }
     return result;
   }
@@ -131,6 +140,9 @@ function formatResearchStep(raw: string): { label: string } {
       search: 'Searching papers',
       paper_details: 'Reading paper details',
       read_paper: 'Reading paper',
+      citation_graph: 'Tracing citations',
+      snippet_search: 'Searching paper snippets',
+      recommend: 'Finding related papers',
       find_datasets: 'Finding paper datasets',
       find_models: 'Finding paper models',
       find_collections: 'Finding paper collections',
@@ -163,7 +175,7 @@ function formatResearchStep(raw: string): { label: string } {
 /** Rolling 2-line display of research sub-tool calls — hidden when complete. */
 function ResearchSteps({ steps, isRunning }: { steps: string[]; isRunning: boolean }) {
   if (!isRunning) return null;
-  const visible = steps.slice(-2);
+  const visible = steps.slice(-RESEARCH_MAX_STEPS);
   if (visible.length === 0) return null;
 
   return (
@@ -236,8 +248,8 @@ function costLabel(hardware: string): string | null {
 // Visual helpers
 // ---------------------------------------------------------------------------
 
-function StatusIcon({ state, cancelled }: { state: ToolPartState; cancelled?: boolean }) {
-  if (cancelled) {
+function StatusIcon({ state, cancelled, isRejected }: { state: ToolPartState; cancelled?: boolean; isRejected?: boolean }) {
+  if (cancelled || isRejected) {
     return <BlockIcon sx={{ fontSize: 16, color: 'var(--muted-text)' }} />;
   }
   switch (state) {
@@ -501,7 +513,7 @@ function InlineApproval({
 // ---------------------------------------------------------------------------
 
 export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProps) {
-  const { setPanel, lockPanel, getJobUrl, getEditedScript } = useAgentStore();
+  const { setPanel, lockPanel, getJobUrl, getEditedScript, setJobStatus, getJobStatus, setToolError, getToolError, setToolRejected, getToolRejected } = useAgentStore();
   const researchSteps = useAgentStore(s => {
     const activeId = s.activeSessionId;
     return activeId ? (s.sessionStates[activeId]?.researchSteps) : undefined;
@@ -527,6 +539,9 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
   // Track which toolCallIds we've already submitted so we can detect new approval rounds
   const submittedIdsRef = useRef<Set<string>>(new Set());
 
+  // ── Panel lock state (for auto-follow vs user-selected) ───────────
+  const [lockedToolId, setLockedToolId] = useState<string | null>(null);
+
   // Reset submission state when new (unseen) pending tools arrive — e.g. second approval round
   useEffect(() => {
     if (!isSubmitting || pendingTools.length === 0) return;
@@ -537,6 +552,35 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
       setDecisions({});
     }
   }, [pendingTools, isSubmitting]);
+
+  // Clean up stale decisions for tools that are no longer pending
+  useEffect(() => {
+    const pendingIds = new Set(pendingTools.map(t => t.toolCallId));
+    const decisionIds = Object.keys(decisions);
+    const hasStale = decisionIds.some(id => !pendingIds.has(id));
+    if (hasStale) {
+      setDecisions(prev => {
+        const cleaned = { ...prev };
+        for (const id of decisionIds) {
+          if (!pendingIds.has(id)) delete cleaned[id];
+        }
+        return cleaned;
+      });
+    }
+  }, [pendingTools, decisions]);
+
+  // Persist error states when tools error
+  useEffect(() => {
+    for (const tool of tools) {
+      const currentlyHasError = tool.state === 'output-error';
+      const persistedError = getToolError(tool.toolCallId);
+
+      // Persist error state if we detect it and haven't already
+      if (currentlyHasError && !persistedError) {
+        setToolError(tool.toolCallId, true);
+      }
+    }
+  }, [tools, setToolError, getToolError]);
 
   const { scriptLabelMap, toolDisplayMap } = useMemo(() => {
     const hfJobs = tools.filter(t => t.toolName === 'hf_jobs' && (t.input as Record<string, unknown>)?.script);
@@ -573,6 +617,10 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
         if (editedScript) {
           logger.log(`Sending edited script for ${toolCallId} (${editedScript.length} chars)`);
         }
+        // Mark tool as rejected if not approved
+        if (!d.approved) {
+          setToolRejected(toolCallId, true);
+        }
         return {
           tool_call_id: toolCallId,
           approved: d.approved,
@@ -592,7 +640,7 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
         setIsSubmitting(false);
       }
     },
-    [approveTools, lockPanel, getEditedScript],
+    [approveTools, lockPanel, getEditedScript, setToolRejected],
   );
 
   const handleApproveAll = useCallback(() => {
@@ -628,8 +676,8 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
     });
   }, []);
 
-  // ── Panel click handler ───────────────────────────────────────────
-  const handleClick = useCallback(
+  // ── Show tool panel (shared logic) ────────────────────────────────
+  const showToolPanel = useCallback(
     (tool: DynamicToolPart) => {
       const args = tool.input as Record<string, unknown> | undefined;
       const displayName = toolDisplayMap[tool.toolCallId] || tool.toolName;
@@ -655,7 +703,13 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
       const inputSection = args ? { content: JSON.stringify(args, null, 2), language: 'json' } : undefined;
 
       const outputText = tool.output ?? (tool.state === 'output-error' ? (tool as Record<string, unknown>).errorText : undefined);
-      if ((tool.state === 'output-available' || tool.state === 'output-error') && outputText) {
+
+      // Determine if tool is still running or has completed
+      const isRunning = tool.state === 'input-available' || tool.state === 'input-streaming' || tool.state === 'approval-responded';
+      const hasCompleted = tool.state === 'output-available' || tool.state === 'output-error' || tool.state === 'output-denied';
+
+      if (outputText) {
+        // Tool has output - show it (regardless of state)
         let language = 'text';
         const content = String(outputText);
         if (content.trim().startsWith('{') || content.trim().startsWith('[')) language = 'json';
@@ -665,6 +719,15 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
         setRightPanelOpen(true);
       } else if (tool.state === 'output-error') {
         const content = `Tool \`${tool.toolName}\` returned an error with no output message.`;
+        setPanel({ title: displayName, output: { content, language: 'markdown' }, input: inputSection }, 'output');
+        setRightPanelOpen(true);
+      } else if (hasCompleted && args) {
+        // Tool completed but has no output - show input as fallback
+        setPanel({ title: displayName, output: { content: JSON.stringify(args, null, 2), language: 'json' }, input: inputSection }, 'output');
+        setRightPanelOpen(true);
+      } else if (isRunning && args) {
+        // Tool is still running - show running message
+        const content = `Tool \`${tool.toolName}\` is still running...\n\nClick the input tab to view the tool arguments.`;
         setPanel({ title: displayName, output: { content, language: 'markdown' }, input: inputSection }, 'output');
         setRightPanelOpen(true);
       } else if (args) {
@@ -685,6 +748,51 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
     },
     [toolDisplayMap, setPanel, getEditedScript, setRightPanelOpen, setLeftSidebarOpen],
   );
+
+  // ── Panel click handler ───────────────────────────────────────────
+  const handleClick = useCallback(
+    (tool: DynamicToolPart) => {
+      // Toggle lock: if clicking the same tool that's already locked, unlock it
+      if (lockedToolId === tool.toolCallId) {
+        setLockedToolId(null);
+        return;
+      }
+
+      // Lock this tool
+      setLockedToolId(tool.toolCallId);
+
+      // Show the panel
+      showToolPanel(tool);
+    },
+    [lockedToolId, showToolPanel],
+  );
+
+  // ── Auto-follow currently active tool when not locked ─────────────
+  const activeToolIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (lockedToolId !== null) return; // User has locked a tool, don't auto-follow
+
+    // Find the currently running tool (latest tool that's in progress)
+    const runningTool = tools.slice().reverse().find(t =>
+      t.state === 'input-available' ||
+      t.state === 'input-streaming' ||
+      t.state === 'approval-responded'
+    );
+
+    if (runningTool) {
+      // Track this as the active tool and show its panel
+      activeToolIdRef.current = runningTool.toolCallId;
+      showToolPanel(runningTool);
+    } else if (activeToolIdRef.current) {
+      // No running tool, but we were following one - check if it completed
+      const completedTool = tools.find(t => t.toolCallId === activeToolIdRef.current);
+      if (completedTool && (completedTool.state === 'output-available' || completedTool.state === 'output-error')) {
+        // The tool we were following has completed - update its panel
+        showToolPanel(completedTool);
+      }
+    }
+  }, [tools, lockedToolId, showToolPanel]);
 
   // ── Parse hf_jobs metadata from output ────────────────────────────
   function parseJobMeta(output: unknown): { jobUrl?: string; jobStatus?: string } {
@@ -777,24 +885,41 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
           const localDecision = decisions[tool.toolCallId];
 
           const cancelled = isCancelledTool(tool);
+          const currentlyHasError = state === 'output-error';
+          const persistedError = getToolError(tool.toolCallId);
+          const persistedRejection = getToolRejected(tool.toolCallId);
+
           // Stale in-progress tools after page reload: treat as completed
           const stale = !isProcessing && (state === 'input-available' || state === 'input-streaming');
           const displayState = stale ? 'output-available'
             : isPending && localDecision
               ? (localDecision.approved ? 'input-available' : 'output-denied')
               : state;
-          const label = cancelled ? 'cancelled' : statusLabel(displayState as ToolPartState);
+          const isRejected = displayState === 'output-denied' || persistedRejection;
+          const hasError = (persistedError || currentlyHasError) && !isRejected;
+          const label = cancelled ? 'cancelled'
+            : isRejected ? 'rejected'
+            : hasError ? 'error'
+            : statusLabel(displayState as ToolPartState);
 
           // Parse job metadata from hf_jobs output and store
           const jobUrlFromStore = tool.toolName === 'hf_jobs' ? getJobUrl(tool.toolCallId) : undefined;
-          const jobMetaFromOutput = tool.toolName === 'hf_jobs' && tool.state === 'output-available'
-            ? parseJobMeta(tool.output)
+          const jobStatusFromStore = tool.toolName === 'hf_jobs' ? getJobStatus(tool.toolCallId) : undefined;
+
+          const jobMetaFromOutput = tool.toolName === 'hf_jobs' && (tool.output || (tool as Record<string, unknown>).errorText)
+            ? parseJobMeta(tool.output ?? (tool as Record<string, unknown>).errorText)
             : {};
-          
-          // Combine job URL from store (available immediately) with output metadata (available at completion)
+
+          // Store job status if we just parsed it and don't have it stored yet
+          if (tool.toolName === 'hf_jobs' && jobMetaFromOutput.jobStatus && !jobStatusFromStore) {
+            setJobStatus(tool.toolCallId, jobMetaFromOutput.jobStatus);
+          }
+
+          // Combine job URL and status from store (persisted) with output metadata (freshly parsed)
+          // Prefer stored values to ensure they persist across renders
           const jobMeta = {
             jobUrl: jobUrlFromStore || jobMetaFromOutput.jobUrl,
-            jobStatus: jobMetaFromOutput.jobStatus,
+            jobStatus: jobStatusFromStore || jobMetaFromOutput.jobStatus,
           };
 
           return (
@@ -810,15 +935,20 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
                   py: 1,
                   cursor: isPending ? 'default' : clickable ? 'pointer' : 'default',
                   transition: 'background-color 0.15s',
+                  bgcolor: lockedToolId === tool.toolCallId ? 'var(--hover-bg)' : 'transparent',
+                  borderLeft: lockedToolId === tool.toolCallId ? '3px solid var(--accent-yellow)' : '3px solid transparent',
                   '&:hover': clickable && !isPending ? { bgcolor: 'var(--hover-bg)' } : {},
                 }}
               >
                 <StatusIcon
                   cancelled={cancelled}
+                  isRejected={isRejected}
                   state={
-                    (tool.toolName === 'hf_jobs' && jobMeta.jobStatus && ['ERROR', 'FAILED', 'CANCELLED'].includes(jobMeta.jobStatus) && displayState === 'output-available')
+                    hasError
                       ? 'output-error'
-                      : displayState as ToolPartState
+                      : ((tool.toolName === 'hf_jobs' && jobMeta.jobStatus && ['ERROR', 'FAILED', 'CANCELLED'].includes(jobMeta.jobStatus))
+                        ? 'output-error'
+                        : displayState as ToolPartState)
                   }
                 />
 
@@ -850,6 +980,7 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
                       : null;
                   const chipLabel = researchLabel || label;
                   if (!chipLabel || (tool.toolName === 'hf_jobs' && jobMeta.jobStatus)) return null;
+
                   return (
                     <Chip
                       label={chipLabel}
@@ -858,12 +989,13 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
                         height: 20,
                         fontSize: '0.65rem',
                         fontWeight: 600,
-                        bgcolor: cancelled ? 'rgba(255,255,255,0.05)'
-                          : displayState === 'output-error' ? 'rgba(224,90,79,0.12)'
-                          : displayState === 'output-denied' ? 'rgba(255,255,255,0.05)'
+                        bgcolor: (cancelled || isRejected) ? 'rgba(255,255,255,0.05)'
+                          : hasError ? 'rgba(224,90,79,0.12)'
                           : (researchLabel && displayState === 'output-available') ? 'rgba(47,204,113,0.12)'
                           : 'var(--accent-yellow-weak)',
-                        color: cancelled ? 'var(--muted-text)' : statusColor(displayState as ToolPartState),
+                        color: (cancelled || isRejected) ? 'var(--muted-text)'
+                          : hasError ? 'var(--accent-red)'
+                          : statusColor(displayState as ToolPartState),
                         letterSpacing: '0.03em',
                       }}
                     />

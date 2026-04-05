@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from routes.agent import router as agent_router
 from routes.auth import router as auth_router
 
-load_dotenv()
+# Load .env from project root (parent directory)
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 # Configure logging
 logging.basicConfig(

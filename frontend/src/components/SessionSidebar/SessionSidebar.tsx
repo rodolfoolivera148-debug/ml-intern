@@ -2,6 +2,12 @@ import { useCallback, useState } from 'react';
 import {
   Alert,
   Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   IconButton,
   Typography,
   CircularProgress,
@@ -51,19 +57,51 @@ export default function SessionSidebar({ onClose }: SessionSidebarProps) {
     }
   }, [isCreatingSession, createSession, setPlan, clearPanel, onClose]);
 
-  const handleDelete = useCallback(
-    async (sessionId: string, e: React.MouseEvent) => {
+  // -- Delete with dialog confirmation ------------------------------------
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDeleteClick = useCallback(
+    (sessionId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      useAgentStore.getState().clearSessionState(sessionId);
-      try {
-        await apiFetch(`/api/session/${sessionId}`, { method: 'DELETE' });
-        deleteSession(sessionId);
-      } catch {
-        deleteSession(sessionId);
-      }
+      setConfirmDeleteId(sessionId);
     },
-    [deleteSession],
+    [],
   );
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!confirmDeleteId || isDeleting) return;
+    const sessionId = confirmDeleteId;
+    setIsDeleting(true);
+
+    const isLastSession = sessions.length === 1;
+
+    useAgentStore.getState().clearSessionState(sessionId);
+    try {
+      await apiFetch(`/api/session/${sessionId}`, { method: 'DELETE' });
+      deleteSession(sessionId);
+    } catch {
+      deleteSession(sessionId);
+    }
+
+    // If this was the last session, create a new one
+    if (isLastSession) {
+      try {
+        const response = await apiFetch('/api/session', { method: 'POST' });
+        if (response.ok) {
+          const data = await response.json();
+          createSession(data.session_id);
+          setPlan([]);
+          clearPanel();
+        }
+      } catch (error) {
+        console.error('Failed to create new session after deleting last one:', error);
+      }
+    }
+
+    setIsDeleting(false);
+    setConfirmDeleteId(null);
+  }, [deleteSession, confirmDeleteId, isDeleting, sessions, createSession, setPlan, clearPanel]);
 
   const handleSelect = useCallback(
     (sessionId: string) => {
@@ -181,6 +219,7 @@ export default function SessionSidebar({ onClose }: SessionSidebarProps) {
                   px: 1.5,
                   py: 0.875,
                   mx: 0.75,
+                  mb: 0.2,
                   borderRadius: '10px',
                   cursor: 'pointer',
                   transition: 'background-color 0.12s ease',
@@ -256,7 +295,7 @@ export default function SessionSidebar({ onClose }: SessionSidebarProps) {
                 <IconButton
                   className="delete-btn"
                   size="small"
-                  onClick={(e) => handleDelete(session.id, e)}
+                  onClick={(e) => handleDeleteClick(session.id, e)}
                   sx={{
                     color: 'var(--muted-text)',
                     width: 26,
@@ -328,6 +367,89 @@ export default function SessionSidebar({ onClose }: SessionSidebarProps) {
         </Box>
 
       </Box>
+      {/* Delete confirmation dialog */}
+      <Dialog
+        open={!!confirmDeleteId}
+        onClose={() => !isDeleting && setConfirmDeleteId(null)}
+        slotProps={{
+          backdrop: { sx: { backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' } },
+        }}
+        PaperProps={{
+          sx: {
+            bgcolor: 'var(--panel)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: 'var(--shadow-1)',
+            maxWidth: 340,
+            mx: 2,
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            color: 'var(--text)',
+            fontWeight: 700,
+            fontSize: '0.95rem',
+            pb: 0,
+            pt: 2.5,
+            px: 3,
+          }}
+        >
+          Delete conversation?
+        </DialogTitle>
+        <DialogContent sx={{ px: 3, pt: 1 }}>
+          <DialogContentText
+            sx={{
+              color: 'var(--muted-text)',
+              fontSize: '0.82rem',
+              lineHeight: 1.6,
+            }}
+          >
+            This will permanently remove this conversation and its history.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+          <Button
+            onClick={() => setConfirmDeleteId(null)}
+            size="small"
+            disabled={isDeleting}
+            sx={{
+              color: 'var(--muted-text)',
+              fontSize: '0.82rem',
+              px: 2,
+              '&:hover': { bgcolor: 'var(--hover-bg)' },
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleDeleteConfirm}
+            variant="contained"
+            size="small"
+            disabled={isDeleting}
+            startIcon={isDeleting ? <CircularProgress size={16} sx={{ color: '#fff' }} /> : undefined}
+            sx={{
+              fontSize: '0.82rem',
+              px: 2.5,
+              bgcolor: 'var(--accent-red)',
+              color: '#fff',
+              boxShadow: 'none',
+              '&:hover': {
+                bgcolor: 'var(--accent-red)',
+                filter: 'brightness(1.15)',
+                boxShadow: 'none',
+              },
+              '&.Mui-disabled': {
+                bgcolor: 'var(--accent-red)',
+                color: '#fff',
+                opacity: 0.7,
+              },
+            }}
+          >
+            {isDeleting ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

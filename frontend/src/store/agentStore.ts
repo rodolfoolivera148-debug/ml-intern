@@ -105,6 +105,15 @@ interface AgentStore {
   // Job URLs (tool_call_id -> job URL) for HF jobs
   jobUrls: Record<string, string>;
 
+  // Job statuses (tool_call_id -> job status) for HF jobs
+  jobStatuses: Record<string, string>;
+
+  // Tool error states (tool_call_id -> true if errored) - persisted across renders
+  toolErrors: Record<string, boolean>;
+
+  // Tool rejected states (tool_call_id -> true if rejected by user) - persisted across renders
+  rejectedTools: Record<string, boolean>;
+
   // ── Per-session actions ─────────────────────────────────────────────
 
   /** Update a session's state. If it's the active session, also update flat state. */
@@ -142,6 +151,15 @@ interface AgentStore {
 
   setJobUrl: (toolCallId: string, jobUrl: string) => void;
   getJobUrl: (toolCallId: string) => string | undefined;
+
+  setJobStatus: (toolCallId: string, status: string) => void;
+  getJobStatus: (toolCallId: string) => string | undefined;
+
+  setToolError: (toolCallId: string, hasError: boolean) => void;
+  getToolError: (toolCallId: string) => boolean | undefined;
+
+  setToolRejected: (toolCallId: string, isRejected: boolean) => void;
+  getToolRejected: (toolCallId: string) => boolean | undefined;
 }
 
 /**
@@ -163,6 +181,44 @@ function syncSnapshot(
   };
 }
 
+// Load persisted tool errors from localStorage
+function loadToolErrors(): Record<string, boolean> {
+  try {
+    const stored = localStorage.getItem('hf-agent-tool-errors');
+    return stored ? JSON.parse(stored) : {};
+  } catch {
+    return {};
+  }
+}
+
+// Save tool errors to localStorage
+function saveToolErrors(errors: Record<string, boolean>): void {
+  try {
+    localStorage.setItem('hf-agent-tool-errors', JSON.stringify(errors));
+  } catch (e) {
+    console.warn('Failed to persist tool errors:', e);
+  }
+}
+
+// Load persisted rejected tools from localStorage
+function loadRejectedTools(): Record<string, boolean> {
+  try {
+    const stored = localStorage.getItem('hf-agent-rejected-tools');
+    return stored ? JSON.parse(stored) : {};
+  } catch {
+    return {};
+  }
+}
+
+// Save rejected tools to localStorage
+function saveRejectedTools(rejected: Record<string, boolean>): void {
+  try {
+    localStorage.setItem('hf-agent-rejected-tools', JSON.stringify(rejected));
+  } catch (e) {
+    console.warn('Failed to persist rejected tools:', e);
+  }
+}
+
 export const useAgentStore = create<AgentStore>()((set, get) => ({
   sessionStates: {},
   activeSessionId: null,
@@ -182,6 +238,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
   editedScripts: {},
   jobUrls: {},
+  jobStatuses: {},
+  toolErrors: loadToolErrors(),
+  rejectedTools: loadRejectedTools(),
 
   // ── Per-session state management ──────────────────────────────────
 
@@ -354,4 +413,38 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
   },
 
   getJobUrl: (toolCallId) => get().jobUrls[toolCallId],
+
+  // ── Job Statuses ────────────────────────────────────────────────────
+
+  setJobStatus: (toolCallId, status) => {
+    set((state) => ({
+      jobStatuses: { ...state.jobStatuses, [toolCallId]: status },
+    }));
+  },
+
+  getJobStatus: (toolCallId) => get().jobStatuses[toolCallId],
+
+  // ── Tool Errors ─────────────────────────────────────────────────────
+
+  setToolError: (toolCallId, hasError) => {
+    set((state) => {
+      const updated = { ...state.toolErrors, [toolCallId]: hasError };
+      saveToolErrors(updated);
+      return { toolErrors: updated };
+    });
+  },
+
+  getToolError: (toolCallId) => get().toolErrors[toolCallId],
+
+  // ── Tool Rejections ──────────────────────────────────────────────────
+
+  setToolRejected: (toolCallId, isRejected) => {
+    set((state) => {
+      const updated = { ...state.rejectedTools, [toolCallId]: isRejected };
+      saveRejectedTools(updated);
+      return { rejectedTools: updated };
+    });
+  },
+
+  getToolRejected: (toolCallId) => get().rejectedTools[toolCallId],
 }));

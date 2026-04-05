@@ -277,7 +277,8 @@ export class SSEChatTransport implements ChatTransport<UIMessage> {
     this.sessionId = sessionId;
     this.sideChannel = sideChannel;
     // Mark as connected immediately — no persistent connection to establish
-    sideChannel.onConnectionChange(true);
+    // Defer to avoid setState during render
+    queueMicrotask(() => sideChannel.onConnectionChange(true));
   }
 
   updateSideChannel(sideChannel: SideChannelCallbacks): void {

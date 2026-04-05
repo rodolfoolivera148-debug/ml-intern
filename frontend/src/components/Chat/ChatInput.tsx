@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, KeyboardEvent } from 'react';
 import { Box, TextField, IconButton, CircularProgress, Typography, Menu, MenuItem, ListItemIcon, ListItemText, Chip } from '@mui/material';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
-import CloseIcon from '@mui/icons-material/Close';
+import StopIcon from '@mui/icons-material/Stop';
 import { apiFetch } from '@/utils/api';
 
 // Model configuration
@@ -67,7 +67,6 @@ interface ChatInputProps {
 
 export default function ChatInput({ onSend, onStop, isProcessing = false, disabled = false, placeholder = 'Ask anything...' }: ChatInputProps) {
   const [input, setInput] = useState('');
-  const [stopHovered, setStopHovered] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [selectedModelId, setSelectedModelId] = useState<string>(() => {
     try {
@@ -207,20 +206,23 @@ export default function ChatInput({ onSend, onStop, isProcessing = false, disabl
           {isProcessing ? (
             <IconButton
               onClick={onStop}
-              onMouseEnter={() => setStopHovered(true)}
-              onMouseLeave={() => setStopHovered(false)}
               sx={{
                 mt: 1,
-                p: 1,
+                p: 1.5,
                 borderRadius: '10px',
-                color: stopHovered ? 'var(--accent-yellow)' : 'var(--muted-text)',
+                color: 'var(--muted-text)',
                 transition: 'all 0.2s',
+                position: 'relative',
                 '&:hover': {
                   bgcolor: 'var(--hover-bg)',
+                  color: 'var(--accent-red)',
                 },
               }}
             >
-              {stopHovered ? <CloseIcon fontSize="small" /> : <CircularProgress size={20} color="inherit" />}
+              <Box sx={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <CircularProgress size={28} thickness={3} sx={{ color: 'inherit', position: 'absolute' }} />
+                <StopIcon sx={{ fontSize: 16 }} />
+              </Box>
             </IconButton>
           ) : (
             <IconButton
