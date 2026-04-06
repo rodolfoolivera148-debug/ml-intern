@@ -704,8 +704,6 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
 
       const outputText = tool.output ?? (tool.state === 'output-error' ? (tool as Record<string, unknown>).errorText : undefined);
 
-      // Determine if tool is still running or has completed
-      const isRunning = tool.state === 'input-available' || tool.state === 'input-streaming' || tool.state === 'approval-responded';
       const hasCompleted = tool.state === 'output-available' || tool.state === 'output-error' || tool.state === 'output-denied';
 
       if (outputText) {
