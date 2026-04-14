@@ -483,6 +483,8 @@ class Handlers:
             try:
                 # ── Call the LLM (streaming or non-streaming) ──
                 llm_params = _resolve_hf_router_params(session.config.model_name)
+                if session.config.reasoning_effort:
+                    llm_params["reasoning_effort"] = session.config.reasoning_effort
                 if session.stream:
                     llm_result = await _call_llm_streaming(session, messages, tools, llm_params)
                 else:

@@ -21,6 +21,7 @@ AGENT="$2"
 MODEL_TO_TRAIN="$3"
 NUM_HOURS="$4"
 AGENT_CONFIG="$5"
+REASONING_EFFORT="${6:-}"
 
 # Paths
 REPO_DIR="${SLURM_SUBMIT_DIR}"
@@ -89,7 +90,8 @@ srun \
     bash -c '
         export PATH="/root/.local/bin:$PATH"
         export HF_HOME="/root/.cache/huggingface"
-        export ANTHROPIC_API_KEY="'"${ANTHROPIC_API_KEY}"'"
+        export ANTHROPIC_API_KEY="'"${ANTHROPIC_API_KEY:-}"'"
+        export OPENAI_API_KEY="'"${OPENAI_API_KEY:-}"'"
         export HF_TOKEN="'"${HF_TOKEN:-}"'"
         unset VIRTUAL_ENV
 
@@ -106,10 +108,15 @@ srun \
 
         MODEL_FLAG=""
         if [ -n "'"${AGENT_CONFIG}"'" ]; then
-            MODEL_FLAG="--model anthropic/'"${AGENT_CONFIG}"'"
+            MODEL_FLAG="--model '"${AGENT_CONFIG}"'"
         fi
 
-        python -m agent.main --max-iterations -1 --no-stream $MODEL_FLAG "$PROMPT"
+        REASONING_FLAG=""
+        if [ -n "'"${REASONING_EFFORT}"'" ]; then
+            REASONING_FLAG="--reasoning-effort '"${REASONING_EFFORT}"'"
+        fi
+
+        python -m agent.main --max-iterations -1 --no-stream $MODEL_FLAG $REASONING_FLAG "$PROMPT"
     ' > "${SOLVE_OUT}" 2>&1 || true
 
 END_TIME=$(date +%s)

@@ -24,6 +24,7 @@ class Config(BaseModel):
     auto_save_interval: int = 3  # Save every N user turns (0 = disabled)
     yolo_mode: bool = False  # Auto-approve all tool calls without confirmation
     max_iterations: int = 300  # Max LLM calls per agent turn (-1 = unlimited)
+    reasoning_effort: str | None = None  # For reasoning models (low/medium/high)
 
     # Permission control parameters
     confirm_cpu_jobs: bool = True

@@ -863,6 +863,7 @@ async def headless_main(
     model: str | None = None,
     max_iterations: int | None = None,
     stream: bool = True,
+    reasoning_effort: str | None = None,
 ) -> None:
     """Run a single prompt headlessly and exit."""
     import logging
@@ -885,6 +886,9 @@ async def headless_main(
 
     if max_iterations is not None:
         config.max_iterations = max_iterations
+
+    if reasoning_effort:
+        config.reasoning_effort = reasoning_effort
 
     print(f"Model: {config.model_name}", file=sys.stderr)
     print(f"Max iterations: {config.max_iterations}", file=sys.stderr)
@@ -1030,6 +1034,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", "-m", default=None, help=f"Model to use (default: from config)")
     parser.add_argument("--max-iterations", type=int, default=None,
                         help="Max LLM requests per turn (default: 50, use -1 for unlimited)")
+    parser.add_argument("--reasoning-effort", default=None, choices=["low", "medium", "high"],
+        help="Reasoning effort for reasoning models (e.g. OpenAI o-series, gpt-5.4)")
     parser.add_argument("--no-stream", action="store_true",
                         help="Disable token streaming (use non-streaming LLM calls)")
     args = parser.parse_args()
@@ -1039,7 +1045,7 @@ if __name__ == "__main__":
             max_iter = args.max_iterations
             if max_iter is not None and max_iter < 0:
                 max_iter = 10_000  # effectively unlimited
-            asyncio.run(headless_main(args.prompt, model=args.model, max_iterations=max_iter, stream=not args.no_stream))
+            asyncio.run(headless_main(args.prompt, model=args.model, max_iterations=max_iter, stream=not args.no_stream, reasoning_effort=args.reasoning_effort))
         else:
             asyncio.run(main())
     except KeyboardInterrupt:
