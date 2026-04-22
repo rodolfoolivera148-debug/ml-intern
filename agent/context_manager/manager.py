@@ -88,10 +88,14 @@ class ContextManager:
             local_mode=local_mode,
         )
         # The model's real input-token ceiling (from litellm.get_model_info).
-        # Compaction triggers at _COMPACT_THRESHOLD_RATIO below it.
+        # Compaction triggers at _COMPACT_THRESHOLD_RATIO below it — see
+        # the compaction_threshold property.
         self.model_max_tokens = model_max_tokens
         self.compact_size = int(model_max_tokens * compact_size)
-        self.context_length = 0  # Updated after each LLM call with actual usage
+        # Running count of tokens the last LLM call reported. Drives the
+        # compaction gate; updated in add_message() with each response's
+        # usage.total_tokens.
+        self.running_context_usage = 0
         self.untouched_messages = untouched_messages
         self.items: list[Message] = [Message(role="system", content=self.system_prompt)]
 
@@ -151,7 +155,7 @@ class ContextManager:
     def add_message(self, message: Message, token_count: int = None) -> None:
         """Add a message to the history"""
         if token_count:
-            self.context_length = token_count
+            self.running_context_usage = token_count
         self.items.append(message)
 
     def get_messages(self) -> list[Message]:
@@ -264,9 +268,18 @@ class ContextManager:
                 count += 1
         return False
 
-    # Trigger compaction at 90% of model_max_tokens so there's headroom for
+    # Compaction fires at 90% of model_max_tokens so there's headroom for
     # the next turn's prompt + response before we actually hit the ceiling.
     _COMPACT_THRESHOLD_RATIO = 0.9
+
+    @property
+    def compaction_threshold(self) -> int:
+        """Token count at which `compact()` kicks in."""
+        return int(self.model_max_tokens * self._COMPACT_THRESHOLD_RATIO)
+
+    @property
+    def needs_compaction(self) -> bool:
+        return self.running_context_usage > self.compaction_threshold and bool(self.items)
 
     async def compact(
         self,
@@ -275,8 +288,7 @@ class ContextManager:
         hf_token: str | None = None,
     ) -> None:
         """Remove old messages to keep history under target size"""
-        threshold = int(self.model_max_tokens * self._COMPACT_THRESHOLD_RATIO)
-        if self.context_length <= threshold or not self.items:
+        if not self.needs_compaction:
             return
 
         system_msg = (
@@ -332,6 +344,6 @@ class ContextManager:
             head.append(first_user_msg)
         self.items = head + [summarized_message] + recent_messages
 
-        self.context_length = (
+        self.running_context_usage = (
             len(self.system_prompt) // 4 + response.usage.completion_tokens
         )
