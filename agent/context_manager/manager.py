@@ -87,7 +87,9 @@ class ContextManager:
             hf_token=hf_token,
             local_mode=local_mode,
         )
-        self.max_context = max_context - 10000
+        # max_context is the model's real input-token ceiling; compaction
+        # triggers at _COMPACT_THRESHOLD_RATIO below it (see compact()).
+        self.max_context = max_context
         self.compact_size = int(max_context * compact_size)
         self.context_length = 0  # Updated after each LLM call with actual usage
         self.untouched_messages = untouched_messages
