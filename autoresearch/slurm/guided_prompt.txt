@@ -1,0 +1,68 @@
+
+## Research loop
+
+You MUST follow a structured research loop. Do not randomly try things.
+
+1. **Get a baseline first**: Run the unmodified train.py. Record val_bpb. This is your reference point.
+2. **Research before EVERY experiment**: Before each experiment, use the `research` tool to investigate what you're about to try. For example:
+   - Before changing batch size: `research({"task": "Find papers and discussions on optimal batch size for short fixed-budget LLM training runs. What batch sizes work best when training time is fixed at 5 minutes?", "context": "Autoresearch: training a small GPT on climbmix-400b with 5-min budget per experiment."})`
+   - Before changing model width: `research({"task": "Research optimal width/depth ratio for small transformer LMs (50-100M params). Find papers on scaling laws for width vs depth tradeoffs.", "context": "Autoresearch: GPT with depth=8, aspect_ratio=64, considering wider models."})`
+   - Before optimizer changes: `research({"task": "Research per-parameter-group optimizer settings for Muon+AdamW hybrid optimizers. Find papers on differentiated learning rates and weight decay for embeddings vs attention vs MLP.", "context": "Autoresearch: using MuonAdamW with global settings, considering per-group tuning."})`
+   Do NOT skip this step. The research subagent has access to papers, docs, and code examples that will give you better hypotheses than guessing. Every experiment should be grounded in evidence.
+3. **One change at a time**: Isolate each change. If you stack multiple changes and val_bpb improves, you don't know which one helped. If it regresses, you don't know which one hurt.
+4. **Record everything**: After each experiment, update results.tsv with the commit hash, val_bpb, memory usage, status (keep/discard/crash), and a description of what you changed and why.
+5. **Compare against your best**: Only keep changes that improve val_bpb over your current best. If a change is neutral or negative, revert it.
+6. **Prioritize high-impact changes first**: Start with Tier 1 structural changes (batch size, width scaling), then move to Tier 2 (attention, positional encoding), then Tier 3 (optimizer tuning), then Tier 4 (initialization, LR schedule).
+7. **Stop when diminishing returns hit**: If your last 5 experiments all produced <0.001 improvement, shift strategy — try a fundamentally different approach or a larger structural change.
+
+## Community findings — what works and what doesn't
+
+Here are proven results from the autoresearch community. Get a baseline first, then take it from here.
+
+### Tier 1: Structural changes (largest single improvements)
+
+1. **Batch size halving (524K → 262K)** — Consistently the single biggest win across every run. -0.012 val_bpb in one shot. The insight is counterintuitive: smaller batches mean more optimizer steps in the fixed 5-minute window. Every community run found this.
+2. **Model width scaling (aspect_ratio 48 → 96, dim 384 → 768)** — Found by SkyPilot's parallel search. Outperformed all hyperparameter tuning combined. Sequential agents almost never find this because they try hyperparameter tweaks first and get stuck in that local optimum.
+3. **Depth/width rebalance (depth 9, aspect_ratio 57, dim 512)** — Going shallower but wider. -0.004 val_bpb. Deeper models (10+) either crashed or degraded.
+
+### Tier 2: Attention and positional encoding
+
+4. **QK-Norm scaler fix** — The original code applied QK-norm but had no scaler afterward, making attention too diffuse. The agent added q = q * 1.15; k = k * 1.15. Karpathy himself annotated this "TODO think through better" — the agent caught a real bug he'd missed.
+5. **RoPE base theta 10K → 100K** — Extending positional encoding range. -0.001 val_bpb.
+6. **Narrower sliding window (seq_len/2 → seq_len/3)** — The original was "too conservative." Window at 768 instead of 1024.
+7. **Logit softcap 20 → 15** — Tighter clamping of logit magnitudes.
+
+### Tier 3: Per-group optimizer tuning
+
+8. **Per-group Adam betas and weight decay** — The original used one global config for all parameter groups. Each group needs its own settings: lm_head gets beta2=0.96 and WD=0.01, embeddings get beta2=0.995 and WD=0.001, value_embeds get WD=0.01 with halved LR.
+9. **Muon optimizer tweaks** — beta2 reduced from 0.95 to 0.9, momentum warmup target increased from 0.95 to 0.97, warmup steps 300 → 400, Polar Express norm factor tightened from 1.02 to 1.01.
+10. **Weight decay schedule** — Changed from linear decay to cosine decay. Also base WD increased from 0.2 to 0.28.
+
+### Tier 4: Initialization and LR schedule
+
+11. **Embedding std reduced (1.0 → 0.8)** — And a razor-thin optimum: 0.68x works, 0.66x regresses.
+12. **Unembedding LR doubled (0.004 → 0.008)**
+13. **Final LR fraction 0.0 → 0.05** — Learning rate doesn't go all the way to zero.
+14. **Warmdown ratio increased (0.5 → 0.65)**
+
+### What's NOT worth trying (all regressed in community runs)
+
+SwiGLU, label smoothing, weight tying, multi-query attention, parallel attention+MLP — all tried and discarded by multiple independent runs. Don't waste experiments on these.
+
+### Key meta-patterns
+
+- Diminishing returns hit fast. The first experiment gives -0.012. By experiment 23 you're getting -0.00003.
+- Regularization has razor-thin optima. VE weight decay works at 0.003 but regresses at 0.005. Init scale works at 0.68x but fails at 0.66x.
+- Architecture changes dominate, but sequential agents usually miss them because they find hyperparameter wins first and get stuck.
+
+## Practical priority order
+
+1. Get a baseline with unmodified train.py
+2. Halve the batch size (TOTAL_BATCH_SIZE 524288 → 262144)
+3. Try width scaling (ASPECT_RATIO 64 → 96)
+4. Apply QK-norm scaler fix (q = q * 1.15; k = k * 1.15)
+5. Try RoPE theta 100K, narrower sliding window, logit softcap 15
+6. Per-group optimizer tuning
+7. Embedding WD 0.001 + VE WD 0.002 isolated
+8. Init scale 0.68x on the final config
+9. Keep iterating on whatever the logs suggest
