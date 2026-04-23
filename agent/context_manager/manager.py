@@ -155,6 +155,12 @@ class ContextManager:
         self.running_context_usage = 0
         self.untouched_messages = untouched_messages
         self.items: list[Message] = [Message(role="system", content=self.system_prompt)]
+        # Append-only mirror of every message added via add_message. Never
+        # rewritten by compact() — this is the full, uncompacted record used
+        # for forensic session logs in posttrain-bench runs. Destructive
+        # operations (/undo, _clear_after_user) truncate this list to match
+        # since the user intent is to erase, not archive.
+        self.full_history: list[Message] = list(self.items)
 
     def _load_system_prompt(
         self,
@@ -214,6 +220,7 @@ class ContextManager:
         if token_count:
             self.running_context_usage = token_count
         self.items.append(message)
+        self.full_history.append(message)
 
     def get_messages(self) -> list[Message]:
         """Get all messages for sending to LLM.
@@ -301,6 +308,9 @@ class ContextManager:
 
         while len(self.items) > 1:
             msg = self.items.pop()
+            # Mirror the pop on full_history so undo is truly destructive.
+            if self.full_history and self.full_history[-1] is msg:
+                self.full_history.pop()
             if getattr(msg, "role", None) == "user":
                 return True
 
@@ -321,6 +331,13 @@ class ContextManager:
             if getattr(msg, "role", None) == "user":
                 if count == user_message_index:
                     self.items = self.items[:i]
+                    # Mirror the truncation on full_history so the user's
+                    # "erase from here" intent is respected in saved logs.
+                    try:
+                        fh_idx = self.full_history.index(msg)
+                        self.full_history = self.full_history[:fh_idx]
+                    except ValueError:
+                        pass
                     return True
                 count += 1
         return False

@@ -189,7 +189,10 @@ class Session:
             "session_start_time": self.session_start_time,
             "session_end_time": datetime.now().isoformat(),
             "model_name": self.config.model_name,
-            "messages": [msg.model_dump() for msg in self.context_manager.items],
+            # Append-only full history — survives compaction. items/ is the
+            # post-compaction view the LLM currently sees, full_history is the
+            # raw record of every message the agent ever produced/received.
+            "messages": [msg.model_dump() for msg in self.context_manager.full_history],
             "events": self.logged_events,
         }
 
